@@ -29,6 +29,9 @@
   name = "github.com/cloudevents/sdk-go"
   version = "0.7.0"
 
+[[constraint]]
+  name = "github.com/keptn/go-utils"
+  branch = "feature/672/collect-event-data"
 
 [prune]
   go-tests = true

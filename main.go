@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"net/http"
 	"net/url"
 
@@ -13,6 +12,8 @@ import (
 	cloudeventshttp "github.com/cloudevents/sdk-go/pkg/cloudevents/transport/http"
 	"github.com/cloudevents/sdk-go/pkg/cloudevents/types"
 	"github.com/google/uuid"
+	keptnevents "github.com/keptn/go-utils/pkg/events"
+	keptnutils "github.com/keptn/go-utils/pkg/utils"
 )
 
 type envConfig struct {
@@ -47,54 +48,55 @@ type annotations struct {
 	Description string `json:"description,omitempty"`
 }
 
-type problem struct {
-	State          string `json:"state"`
-	ProblemID      string `json:"problemID"`
-	PID            string `json:"pid"`
-	ProblemTitle   string `json:"problemtitle"`
-	ProblemDetails string `json:"problemdetails"`
-	ImpactedEntity string `json:"impactedEntity"`
-}
-
 const eventBrokerURL = "http://event-broker.keptn.svc.cluster.local/keptn"
 
 func main() {
+	shkeptncontext := ""
+	logger := keptnutils.NewLogger(shkeptncontext, "", "alertmanager-service")
+	logger.Debug("starting handler")
 	http.HandleFunc("/", Handler)
 	http.ListenAndServe(":8080", nil)
 }
 
-// Handler
+// Handler takes the prometheus alert as input
 func Handler(rw http.ResponseWriter, req *http.Request) {
+	shkeptncontext := ""
+	logger := keptnutils.NewLogger(shkeptncontext, "", "alertmanager-service")
+	logger.Debug("receiving event from prometheus alertmanager")
+
 	decoder := json.NewDecoder(req.Body)
 	var event alertManagerEvent
 	err := decoder.Decode(&event)
 	if err != nil {
-		panic(err)
+		logger.Error("Could not map received event to datastructure: " + err.Error())
 	}
 
-	newProblemData := problem{
-		State:          "OPEN",
+	problemState := ""
+	if event.Status == "firing" {
+		problemState = "OPEN"
+	}
+
+	newProblemData := keptnevents.ProblemEventData{
+		State:          problemState,
 		ProblemID:      "",
-		PID:            "",
 		ProblemTitle:   event.Alerts[0].Annotations.Summary,
 		ProblemDetails: event.Alerts[0].Annotations.Description,
 		ImpactedEntity: event.Alerts[0].Labels.PodName,
 	}
 
-	err = createAndSendCE(newProblemData)
+	logger.Debug("sending event to eventbroker")
+	err = createAndSendCE(shkeptncontext, newProblemData)
 	if err != nil {
-		fmt.Println(err.Error())
+		logger.Error("could not send cloud event: " + err.Error())
 		rw.WriteHeader(500)
 	} else {
+		logger.Debug("event successfully dispatched to eventbroker")
 		rw.WriteHeader(201)
 	}
 
 }
 
-func createAndSendCE(problemData problem) error {
-
-	shkeptncontext := "test"
-
+func createAndSendCE(shkeptncontext string, problemData keptnevents.ProblemEventData) error {
 	source, _ := url.Parse("prometheus")
 	contentType := "application/json"
 
@@ -108,8 +110,6 @@ func createAndSendCE(problemData problem) error {
 		}.AsV02(),
 		Data: problemData,
 	}
-
-	fmt.Println(ce.String())
 
 	t, err := cloudeventshttp.New(
 		cloudeventshttp.WithTarget(eventBrokerURL),
